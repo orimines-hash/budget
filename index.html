@@ -1592,67 +1592,71 @@ async function parseCSV(file){return new Promise(r=>{const fr=new FileReader();f
 // ישראכרט / כאל Excel parser (כרטיס אורי 9519 וסיגל 5042)
 // פורמט: שורת כותרת עם חודש, עמודות: תאריך|שם בית עסק|סכום עסקה|מטבע|סכום חיוב|...
 // ==========================================================
+// ====================================================================
+// ישראכרט / כאל Excel parser — קורא את כל הקבוצות
+// ====================================================================
 function isIsracartExcel(data){
   if(!data.length) return false;
-  // מזהה אם יש שורה עם "שם בית עסק" ו"סכום חיוב" בכותרות
-  const allVals=data.slice(0,6).flatMap(r=>Object.values(r).map(v=>String(v||'')));
-  return allVals.some(v=>/שם בית עסק/.test(v))||allVals.some(v=>/סכום חיוב/.test(v));
+  // חפש ב-20 שורות ראשונות — header בשורה 10
+  const allVals=data.slice(0,20).flatMap(r=>Object.values(r).map(v=>String(v||'')));
+  return allVals.some(v=>/שם בית עסק/.test(v))
+      || allVals.some(v=>/פירוט עסקאות/.test(v))
+      || allVals.some(v=>/מסטרקארד|ויזה|ישראכרט|9519|5042/.test(v));
 }
 
 function parseIsracartExcel(data, src){
   const rows=[];
-
-  // חפש חודש חיוב בשורות הראשונות
   let billingMonth='';
+
+  // 1. חפש חודש חיוב בשורות הראשונות
   const mnames={ינואר:'01',פברואר:'02',מרץ:'03',אפריל:'04',מאי:'05',יוני:'06',יולי:'07',אוגוסט:'08',ספטמבר:'09',אוקטובר:'10',נובמבר:'11',דצמבר:'12'};
-  data.slice(0,5).forEach(row=>{
+  data.slice(0,8).forEach(row=>{
     Object.values(row).forEach(v=>{
       const s=String(v||'');
       const mm=s.match(/^(\S+)\s+(20\d{2})$/);
-      if(mm&&mnames[mm[1]]){billingMonth=`${mm[2]}-${mnames[mm[1]]}`;}
+      if(mm&&mnames[mm[1]]) billingMonth=`${mm[2]}-${mnames[mm[1]]}`;
     });
   });
 
-  // מצא את שורת הכותרות (מכילה "שם בית עסק")
+  // 2. סרוק את כל השורות — זהה כותרות ועסקאות בכל הקבוצות
   let colDate=-1, colMerchant=-1, colChargeAmt=-1, colDetails=-1;
-  let headerRowIdx=-1;
-  data.forEach((row,i)=>{
-    const vals=Object.values(row).map(v=>String(v||''));
-    const dateIdx=vals.findIndex(v=>/תאריך רכישה|תאריך/.test(v)&&!/תנאים/.test(v));
-    if(dateIdx>=0&&vals.some(v=>/שם בית עסק/.test(v))){
-      colDate=dateIdx;
+  const dateRe=/^(\d{1,2})[.\-\/](\d{1,2})[.\-\/](\d{2,4})$/;
+  const stopRe=/תנאים משפטיים|עסקאות בחיוב מיידי/;
+
+  for(const row of data){
+    const vals=Object.values(row).map(v=>String(v===null||v===undefined?'':v).trim());
+
+    // עצור בתנאים משפטיים
+    if(vals.some(v=>stopRe.test(v))) break;
+
+    // זיהוי שורת כותרת — עדכן מיקום עמודות
+    if(vals.some(v=>/שם בית עסק/.test(v))){
+      const tmp=vals.findIndex(v=>/תאריך/.test(v));
+      if(tmp>=0) colDate=tmp;
       colMerchant=vals.findIndex(v=>/שם בית עסק/.test(v));
       colChargeAmt=vals.findIndex(v=>/סכום חיוב/.test(v));
       colDetails=vals.findIndex(v=>/פירוט נוסף/.test(v));
-      headerRowIdx=i;
+      continue;
     }
-  });
 
-  if(headerRowIdx<0||colDate<0||colMerchant<0||colChargeAmt<0) return [];
+    if(colDate<0||colMerchant<0||colChargeAmt<0) continue;
 
-  const dateRe=/^(\d{1,2})[.\-\/](\d{1,2})[.\-\/](\d{2,4})$/;
-  const stopRe=/סה"כ|תנאים משפטיים|לא רק|www\.|שירות לקוח|עסקאות בחיוב מיידי/;
-
-  data.slice(headerRowIdx+1).forEach(row=>{
-    const vals=Object.values(row);
-    const dateVal=String(vals[colDate]||'').trim();
-    if(!dateVal||stopRe.test(dateVal)) return;
-
+    // שורת עסקה — חייב תאריך תקני
+    const dateVal=vals[colDate]||'';
     const dm=dateVal.match(dateRe);
-    if(!dm) return;
+    if(!dm) continue;
 
     const yr=dm[3].length===2?'20'+dm[3]:dm[3];
     const dateStr=`${yr}-${dm[2].padStart(2,'0')}-${dm[1].padStart(2,'0')}`;
 
-    const merchant=String(vals[colMerchant]||'').trim().replace(/\s+/g,' ');
-    if(!merchant||merchant.length<2) return;
+    const merchant=(vals[colMerchant]||'').replace(/\s+/g,' ').trim().slice(0,60);
+    if(!merchant) continue;
 
-    const chargeAmt=parseFloat(String(vals[colChargeAmt]||'0').replace(/[,\s₪]/g,''))||0;
-    if(Math.abs(chargeAmt)<0.01) return;
+    const chargeAmt=parseFloat((vals[colChargeAmt]||'0').replace(/[,\s₪]/g,''))||0;
+    if(Math.abs(chargeAmt)<0.01) continue;
 
-    const details=colDetails>=0?String(vals[colDetails]||'').replace(/\n/g,' ').trim():'';
+    const details=colDetails>=0?(vals[colDetails]||'').replace(/\n/g,' ').trim():'';
     const isCredit=chargeAmt<0||/זיכוי/.test(details);
-
     const{cat,group}=merchantToCat(merchant,details);
 
     rows.push({
@@ -1666,10 +1670,11 @@ function parseIsracartExcel(data, src){
       type:isCredit?'income':'expense',
       month:billingMonth||dateStr.slice(0,7)
     });
-  });
+  }
 
   return rows;
 }
+
 
 // מיפוי שם בית עסק לקטגוריה (לכרטיסי אשראי)
 function merchantToCat(merchant, details){
