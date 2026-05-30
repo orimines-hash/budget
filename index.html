@@ -176,6 +176,14 @@ body{font-family:'Heebo',sans-serif;background:#F5F4EF;color:#1A1917;min-height:
           <i class="ti ti-check"></i> <strong id="settings-connected-name"></strong> — מחובר
         </div>
       </div>
+      <div class="card" style="max-width:480px;margin-top:1rem">
+        <div class="card-title">נתונים מקומיים</div>
+        <div style="font-size:13px;color:var(--text2);margin-bottom:1rem;line-height:1.6">
+          אם יש בעיות תצוגה (תווים שגויים, עברית שבורה) — נקה את הנתונים המקומיים ורענן.<br>
+          <strong>הנתונים ב-GitHub נשמרים — תוכל למשוך אותם חזרה לאחר הניקוי.</strong>
+        </div>
+        <button class="btn danger" onclick="clearLocalAndReload()"><i class="ti ti-refresh"></i> נקה נתונים מקומיים ורענן</button>
+      </div>
     </div>
 
     <!-- OVERVIEW -->
@@ -1819,6 +1827,17 @@ function delRowEdit(oi){
 // ===========================================
 // TRASH — סל מחזור
 // ===========================================
+
+function clearLocalAndReload(){
+  if(!confirm('לנקות את כל הנתונים המקומיים ולרענן?\nהנתונים ב-GitHub נשמרים — תוכל למשוך אותם חזרה.')) return;
+  const tok=getSyncToken();
+  const name=localStorage.getItem('sync_name')||'';
+  localStorage.clear();
+  // שמור את הטוקן
+  if(tok) localStorage.setItem('sync_token',tok);
+  if(name) localStorage.setItem('sync_name',name);
+  location.reload();
+}
 
 function renderSettings(){
   const tok=getSyncToken();
