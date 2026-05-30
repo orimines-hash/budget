@@ -130,9 +130,10 @@ body{font-family:'Heebo',sans-serif;background:#F5F4EF;color:#1A1917;min-height:
     <div class="nav-item" onclick="showView('upload')"><i class="ti ti-files"></i> קבצים</div>
     <div class="nav-item" onclick="showView('add')"><i class="ti ti-plus"></i> הוספה ידנית</div>
     <div class="nav-item" onclick="showView('trash')"><i class="ti ti-trash"></i> סל מחזור</div>
+    <div class="nav-item" onclick="showView('settings')"><i class="ti ti-adjustments-horizontal"></i> הגדרות</div>
     <div class="nav-item" onclick="softReload()" style="border-top:1px solid #333;padding-top:10px;margin-top:auto"><i class="ti ti-refresh"></i> רענן</div>
     <!-- SYNC STATUS in sidebar -->
-    <div id="sync-sidebar" onclick="toggleSyncSetup()" style="cursor:pointer;padding:10px 1.25rem;border-top:1px solid #333;margin-top:4px;display:flex;align-items:center;gap:8px">
+    <div id="sync-sidebar" onclick="showView('settings')" style="cursor:pointer;padding:10px 1.25rem;border-top:1px solid #333;margin-top:4px;display:flex;align-items:center;gap:8px">
       <div id="sync-dot" style="width:10px;height:10px;border-radius:50%;flex-shrink:0;background:#555"></div>
       <div style="flex:1;min-width:0">
         <div style="font-size:11px;color:#888;line-height:1.3" id="sync-status">לא מחובר</div>
@@ -144,16 +145,39 @@ body{font-family:'Heebo',sans-serif;background:#F5F4EF;color:#1A1917;min-height:
   <main class="main">
 
 
-    <!-- SYNC SETUP PANEL (פופאפ מהסרגל) -->
-    <div id="sync-setup" style="display:none;position:fixed;bottom:70px;left:0;width:220px;background:#1A1917;border:1px solid #444;border-top-right-radius:8px;border-bottom-right-radius:8px;padding:14px;z-index:150;font-size:12px;box-shadow:4px 0 16px rgba(0,0,0,.3)">
-      <div style="font-weight:600;color:#fff;margin-bottom:5px">סנכרון GitHub</div>
-      <div style="color:#888;margin-bottom:10px;font-size:11px">טוקן עם גישה ל-budget-data</div>
-      <input type="password" id="sync-token-inp" style="width:100%;padding:6px 9px;border:1px solid #444;border-radius:6px;font-size:12px;font-family:'Heebo',sans-serif;background:#2A2927;color:#fff;margin-bottom:8px" placeholder="github_pat_...">
-      <div style="display:flex;gap:6px">
-        <button onclick="saveSyncToken()" style="flex:1;padding:6px;background:#185FA5;color:#fff;border:none;border-radius:5px;font-family:'Heebo',sans-serif;font-size:12px;cursor:pointer">שמור</button>
-        <button onclick="clearSyncToken()" style="padding:6px 10px;background:#333;color:#aaa;border:none;border-radius:5px;font-family:'Heebo',sans-serif;font-size:12px;cursor:pointer">נקה</button>
+    <!-- SETTINGS VIEW -->
+    <div id="view-settings" class="view">
+      <div class="page-title">הגדרות</div>
+      <div class="page-sub">חיבור לסנכרון GitHub</div>
+      <div class="card" style="max-width:480px">
+        <div class="card-title">סנכרון נתונים
+          <div id="settings-status-badge" style="font-size:11px;font-weight:400;padding:3px 10px;border-radius:10px;background:var(--surface2)">לא מחובר</div>
+        </div>
+        <div style="font-size:13px;color:var(--text2);margin-bottom:1.25rem;line-height:1.7">
+          הזן את הטוקן שלך פעם אחת — יישמר בדפדפן הזה בלבד.<br>
+          כל מכשיר / משתמש צריך טוקן נפרד עם גישה ל-<code style="background:var(--surface2);padding:1px 5px;border-radius:3px">budget-data</code>
+        </div>
+        <div class="form-grid">
+          <div class="form-row">
+            <label>שם המכשיר / משתמש</label>
+            <input type="text" id="sync-name-inp" autocomplete="off" placeholder="לדוגמה: אורי אנדרואיד">
+          </div>
+          <div class="form-row">
+            <label>GitHub Token</label>
+            <input type="password" id="sync-token-inp" autocomplete="new-password" data-lpignore="true" placeholder="github_pat_...">
+          </div>
+        </div>
+        <div style="margin-top:1rem;display:flex;gap:8px;flex-wrap:wrap">
+          <button class="btn primary" onclick="saveSyncToken()"><i class="ti ti-check"></i> שמור וחבר</button>
+          <button class="btn danger" onclick="clearSyncToken()"><i class="ti ti-unlink"></i> נתק</button>
+          <button class="btn" onclick="showView('overview')"><i class="ti ti-x"></i> ביטול</button>
+        </div>
+        <div id="settings-connected-info" style="display:none;margin-top:1rem;padding:10px 14px;background:var(--green-bg);border-radius:8px;border:1px solid #BDE0B4;font-size:12px;color:var(--green)">
+          <i class="ti ti-check"></i> <strong id="settings-connected-name"></strong> — מחובר
+        </div>
       </div>
     </div>
+
     <!-- OVERVIEW -->
     <div id="view-overview" class="view active">
       <div class="page-title">סקירה חודשית</div>
@@ -1745,6 +1769,27 @@ function delRowEdit(oi){
 // ===========================================
 // TRASH — סל מחזור
 // ===========================================
+
+function renderSettings(){
+  const tok=getSyncToken();
+  const name=localStorage.getItem('sync_name')||'';
+  const badge=document.getElementById('settings-status-badge');
+  const info=document.getElementById('settings-connected-info');
+  const infoName=document.getElementById('settings-connected-name');
+  if(tok){
+    if(badge){badge.textContent='מחובר ✓';badge.style.background='var(--green-bg)';badge.style.color='var(--green)';}
+    if(info) info.style.display='block';
+    if(infoName) infoName.textContent=name||'מחובר';
+    const nameInp=document.getElementById('sync-name-inp');
+    const tokInp=document.getElementById('sync-token-inp');
+    if(nameInp&&!nameInp.value) nameInp.value=name;
+    if(tokInp) tokInp.value=''; // don't show token
+  } else {
+    if(badge){badge.textContent='לא מחובר';badge.style.background='var(--surface2)';badge.style.color='var(--text2)';}
+    if(info) info.style.display='none';
+  }
+}
+
 function renderTrash(){
   const cont=document.getElementById('trash-list');
   if(!cont) return;
@@ -1868,22 +1913,23 @@ let _lastPushed  = localStorage.getItem('sync_last_pushed') || '';
 function getSyncToken(){return localStorage.getItem('sync_token')||'';}
 
 function saveSyncToken(){
-  const v=document.getElementById('sync-token-inp').value.trim();
+  const v=document.getElementById('sync-token-inp')?.value.trim()||'';
+  const n=document.getElementById('sync-name-inp')?.value.trim()||'משתמש';
   if(!v){alert('נא להזין טוקן');return;}
   localStorage.setItem('sync_token',v);
-  document.getElementById('sync-setup').style.display='none';
+  localStorage.setItem('sync_name',n);
   initSyncBar();
-  syncPull(); // pull immediately after token saved
+  renderSettings();
+  syncPull();
 }
 function clearSyncToken(){
   localStorage.removeItem('sync_token');
+  localStorage.removeItem('sync_name');
   _lastPushed='';
   initSyncBar();
+  renderSettings();
 }
-function toggleSyncSetup(){
-  const el=document.getElementById('sync-setup');
-  el.style.display=el.style.display==='none'?'block':'none';
-}
+function toggleSyncSetup(){ showView('settings'); }
 
 function setSyncStatus(state,msg){
   const dot=document.getElementById('sync-dot');
@@ -1895,10 +1941,11 @@ function setSyncStatus(state,msg){
 
 function initSyncBar(){
   const tok=getSyncToken();
+  const name=localStorage.getItem('sync_name')||'';
   if(!tok){
     setSyncStatus('idle','לא מחובר');
   } else {
-    setSyncStatus('ok','מחובר ✓');
+    setSyncStatus('ok',name?name+' ✓':'מחובר ✓');
   }
 }
 
@@ -2016,7 +2063,7 @@ function schedulePush(delay=2000){
 // ===========================================
 // NAV
 // ===========================================
-const VIEWS=['overview','transactions','averages','manage','upload','add','trash'];
+const VIEWS=['overview','transactions','averages','manage','upload','add','trash','settings'];
 
 function showView(name){
   document.querySelectorAll('.view').forEach(v=>v.classList.remove('active'));
@@ -2029,6 +2076,7 @@ function showView(name){
   if(name==='upload')      renderFiles();
   if(name==='add')         populateAdd();
   if(name==='trash')       renderTrash();
+  if(name==='settings')    renderSettings();
   sd('hh4_lastview',name); // שמור לשונית ב-localStorage
 }
 
