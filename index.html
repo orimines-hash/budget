@@ -471,7 +471,7 @@ let recurringTpls = ld('hh4_rec') || [];
 let deletedItems = ld('hh4_trash') || []; // deleted categories
 let deletedTxns  = ld('hh4_txntrash') || []; // deleted transactions
 let activeMonth = '';
-function save(){sd('hh4_txns',txns);sd('hh4_files',importedFiles);}
+function save(){sd('hh4_txns',txns);sd('hh4_files',importedFiles);schedulePush();}
 function saveRec(){sd('hh4_rec',recurringTpls);}
 function saveTrash(){sd('hh4_trash',deletedItems);sd('hh4_txntrash',deletedTxns);}
 // run cleanup on load (removes pre-2026-01 and future months)
@@ -1937,12 +1937,17 @@ function softReload(){
 
 
 // ===========================================
-// GITHUB SYNC
+// GITHUB SYNC — אוטומטי
 // ===========================================
 const SYNC_USER  = 'orimines-hash';
 const SYNC_REPO  = 'budget-data';
 const SYNC_FILE  = 'data.json';
-const SYNC_KEYS  = ['hh4_txns','hh4_files','hh4_groups','hh4_cats','hh4_rec','hh4_trash','hh4_txntrash','hh4_catdesc','hh4_manual','hh4_learned'];
+const SYNC_KEYS  = ['hh4_txns','hh4_files','hh4_groups','hh4_cats','hh4_rec',
+                    'hh4_trash','hh4_txntrash','hh4_catdesc','hh4_manual','hh4_learned'];
+
+let _pushTimer   = null;
+let _syncing     = false;
+let _lastPushed  = localStorage.getItem('sync_last_pushed') || '';
 
 function getSyncToken(){return localStorage.getItem('sync_token')||'';}
 
@@ -1952,9 +1957,11 @@ function saveSyncToken(){
   localStorage.setItem('sync_token',v);
   document.getElementById('sync-setup').style.display='none';
   initSyncBar();
+  syncPull(); // pull immediately after token saved
 }
 function clearSyncToken(){
   localStorage.removeItem('sync_token');
+  _lastPushed='';
   initSyncBar();
 }
 function toggleSyncSetup(){
@@ -1962,29 +1969,28 @@ function toggleSyncSetup(){
   el.style.display=el.style.display==='none'?'block':'none';
 }
 
-function setSyncStatus(state, msg){
+function setSyncStatus(state,msg){
   const dot=document.getElementById('sync-dot');
   const txt=document.getElementById('sync-status');
-  dot.className='sync-dot '+state;
-  txt.textContent=msg;
+  if(dot) dot.className='sync-dot '+state;
+  if(txt) txt.textContent=msg;
 }
 
 function initSyncBar(){
   const bar=document.getElementById('sync-bar');
-  bar.style.display='flex';
+  if(bar) bar.style.display='flex';
   const tok=getSyncToken();
+  const btns=['btn-pull','btn-push'].map(id=>document.getElementById(id));
   if(!tok){
     setSyncStatus('idle','לא מחובר — לחץ ⚙ להגדרה');
-    document.getElementById('btn-pull').disabled=true;
-    document.getElementById('btn-push').disabled=true;
+    btns.forEach(b=>{if(b)b.disabled=true;});
   } else {
-    setSyncStatus('ok','מחובר ✓');
-    document.getElementById('btn-pull').disabled=false;
-    document.getElementById('btn-push').disabled=false;
+    setSyncStatus('ok','מחובר');
+    btns.forEach(b=>{if(b)b.disabled=false;});
   }
 }
 
-async function ghRequest(method, path, body=null){
+async function ghReq(method,path,body=null){
   const tok=getSyncToken();
   const res=await fetch(`https://api.github.com${path}`,{
     method,
@@ -1999,42 +2005,100 @@ async function ghRequest(method, path, body=null){
   return{status:res.status,data:await res.json()};
 }
 
-async function syncPull(){
-  setSyncStatus('warn','מושך נתונים...');
+// ── PULL ──────────────────────────────────────────────────
+async function syncPull(silent=false){
+  if(!getSyncToken()||_syncing) return;
+  _syncing=true;
+  if(!silent) setSyncStatus('warn','מושך...');
   try{
-    const{status,data}=await ghRequest('GET',`/repos/${SYNC_USER}/${SYNC_REPO}/contents/${SYNC_FILE}`);
-    if(status!==200){setSyncStatus('err',`שגיאה: ${data.message}`);return;}
+    const{status,data}=await ghReq('GET',`/repos/${SYNC_USER}/${SYNC_REPO}/contents/${SYNC_FILE}`);
+    if(status!==200){setSyncStatus('err',`שגיאה: ${data.message}`);_syncing=false;return;}
+
     const remote=JSON.parse(atob(data.content.replace(/\n/g,'')));
-    // Merge: take remote data, apply to localStorage
-    SYNC_KEYS.forEach(k=>{if(remote[k]!=null)localStorage.setItem(k,JSON.stringify(remote[k]));});
-    softReload();
-    const ts=remote.lastUpdated?` (${new Date(remote.lastUpdated).toLocaleString('he-IL')})`:' ';
-    setSyncStatus('ok',`סונכרן בהצלחה${ts}`);
+    const remoteTime=remote.lastUpdated||'';
+
+    // בדוק קונפליקט: remote עודכן מאז שדחפנו לאחרונה, ויש לנו שינויים מקומיים
+    const localHasChanges = _lastPushed && remoteTime > _lastPushed;
+    if(localHasChanges && _lastPushed){
+      _syncing=false;
+      showConflictModal(remote, remoteTime);
+      return;
+    }
+
+    applyRemoteData(remote);
+    _lastPushed=remoteTime;
+    localStorage.setItem('sync_last_pushed',_lastPushed);
+    const ts=remoteTime?new Date(remoteTime).toLocaleTimeString('he-IL'):'';
+    setSyncStatus('ok',`מסונכרן${ts?' · '+ts:''}`);
   }catch(e){setSyncStatus('err','שגיאת רשת');}
+  _syncing=false;
 }
 
+function applyRemoteData(remote){
+  SYNC_KEYS.forEach(k=>{if(remote[k]!=null)localStorage.setItem(k,JSON.stringify(remote[k]));});
+  softReload();
+}
+
+function showConflictModal(remote, remoteTime){
+  const remoteBy=remote.updatedBy||'משתמש אחר';
+  const remoteTs=remoteTime?new Date(remoteTime).toLocaleString('he-IL'):'';
+  showModal('שינויים מ-2 צדדים',
+    `<div style="font-size:13px;line-height:1.8">
+      נמצאו שינויים מקומיים ושינויים מ-<strong>${remoteBy}</strong>${remoteTs?' ('+remoteTs+')':''}.<br>
+      מה לשמור?
+    </div>`,
+    [
+      {l:'קח את שלי (דרוס שרת)', c:'primary', a:'resolveConflict("mine")'},
+      {l:'קח מהשרת (דרוס שלי)',  c:'',        a:`resolveConflict("theirs",${JSON.stringify(remote).replace(/"/g,"'")})`},
+      {l:'ביטול',                 c:'',        a:'closeModalDirect()'},
+    ]);
+}
+
+window.resolveConflict=function(choice, remote){
+  closeModalDirect();
+  if(choice==='mine'){
+    schedulePush(0); // push immediately
+  } else if(choice==='theirs' && remote){
+    applyRemoteData(remote);
+    setSyncStatus('ok','עודכן מהשרת');
+  }
+};
+
+// ── PUSH ──────────────────────────────────────────────────
 async function syncPush(){
-  setSyncStatus('warn','שומר נתונים...');
+  if(!getSyncToken()||_syncing) return;
+  _syncing=true;
+  setSyncStatus('warn','שומר...');
   try{
-    // Get current SHA
-    const{status:s1,data:d1}=await ghRequest('GET',`/repos/${SYNC_USER}/${SYNC_REPO}/contents/${SYNC_FILE}`);
+    const{status:s1,data:d1}=await ghReq('GET',`/repos/${SYNC_USER}/${SYNC_REPO}/contents/${SYNC_FILE}`);
     const sha=s1===200?d1.sha:null;
 
-    // Build data object
-    const payload={version:1,lastUpdated:new Date().toISOString(),updatedBy:SYNC_USER};
+    const now=new Date().toISOString();
+    const payload={version:1,lastUpdated:now,updatedBy:SYNC_USER};
     SYNC_KEYS.forEach(k=>{try{payload[k]=JSON.parse(localStorage.getItem(k)||'null');}catch{payload[k]=null;}});
 
     const content=btoa(unescape(encodeURIComponent(JSON.stringify(payload,null,2))));
-    const body={message:`Sync ${new Date().toLocaleString('he-IL')}`,content};
+    const body={message:`Auto sync ${new Date().toLocaleString('he-IL')}`,content};
     if(sha) body.sha=sha;
 
-    const{status:s2,data:d2}=await ghRequest('PUT',`/repos/${SYNC_USER}/${SYNC_REPO}/contents/${SYNC_FILE}`,body);
+    const{status:s2}=await ghReq('PUT',`/repos/${SYNC_USER}/${SYNC_REPO}/contents/${SYNC_FILE}`,body);
     if(s2===200||s2===201){
-      setSyncStatus('ok',`נשמר ✓ ${new Date().toLocaleTimeString('he-IL')}`);
+      _lastPushed=now;
+      localStorage.setItem('sync_last_pushed',now);
+      setSyncStatus('ok','שמור ✓ · '+new Date().toLocaleTimeString('he-IL'));
     } else {
-      setSyncStatus('err',`שגיאה: ${d2.message}`);
+      setSyncStatus('err','שגיאת שמירה');
     }
   }catch(e){setSyncStatus('err','שגיאת רשת');}
+  _syncing=false;
+}
+
+// ── AUTO-PUSH: debounce 2s after every save() ─────────────
+function schedulePush(delay=2000){
+  if(!getSyncToken()) return;
+  if(_pushTimer) clearTimeout(_pushTimer);
+  setSyncStatus('warn','שינויים ממתינים לשמירה...');
+  _pushTimer=setTimeout(()=>{_pushTimer=null;syncPush();},delay);
 }
 
 // ===========================================
@@ -2059,6 +2123,7 @@ function showView(name){
 // INIT
 migrateFiles();
 initSyncBar();
+if(getSyncToken()) syncPull(true); // auto-pull on load
 cleanupData();
 const _m=getMonths();if(_m.length) activeMonth=_m[_m.length-1];
 // שחזר לשונית אחרונה (מ-localStorage או מה-hash)
