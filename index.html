@@ -1279,7 +1279,11 @@ async function handleFiles(files){
       if(ext==='pdf'){
         if(src==='budget'){
           const txt=await pdfText(file);
-          rows=parseKibbutz(txt);
+          if(isKibbutzInvoice(txt)){
+            rows=parseKibbutzInvoicePDF(txt);
+          } else {
+            rows=parseKibbutz(txt);
+          }
         } else if(src==='credit_sigal'||src==='credit_ori'){
           const lines=await pdfTextByRows(file);
           rows=parseCalPDF(lines,src);
@@ -1337,6 +1341,80 @@ async function handleFiles(files){
   renderFiles();renderOverview();
 }
 
+
+// ==========================================================
+// חשבונית מס קיבוץ — פרסר ייעודי (כלבו, חדר אוכל נפרדים)
+// ==========================================================
+function isKibbutzInvoice(text){
+  return /חשבונית מס/.test(text) && /קיבוץ גזית/.test(text);
+}
+
+function parseKibbutzInvoicePDF(text){
+  const rows=[];
+
+  // תאריך חשבונית
+  const dm=text.match(/(\d{2})\/(\d{2})\/(\d{2,4})/);
+  let dateStr='',month='';
+  if(dm){
+    const yr=dm[3].length===2?'20'+dm[3]:dm[3];
+    dateStr=`${yr}-${dm[2].padStart(2,'0')}-${dm[1].padStart(2,'0')}`;
+    month=dateStr.slice(0,7);
+  }
+
+  // סה"כ כולל מע"מ
+  let grandTotal=0;
+  const gtm=text.match(/סה"כ לתשלום[^\d]*(\d[\d,]*\.?\d{0,2})/);
+  if(gtm) grandTotal=parseFloat(gtm[1].replace(/,/g,''));
+
+  // סה"כ נטו לפני מע"מ
+  let netTotal=0;
+  const ntm=text.match(/סה"כ לפ[יי][\s\S]{0,10}?(\d[\d,]*\.\d{2})\s*$/m);
+  if(!ntm){
+    // fallback: חפש לפי הנחה
+    const ntm2=text.match(/סה"כ[^\n]*הנחה[^\d]*(\d[\d,]*\.\d{2})/);
+    if(ntm2) netTotal=parseFloat(ntm2[1].replace(/,/g,''));
+  } else {
+    netTotal=parseFloat(ntm[1].replace(/,/g,''));
+  }
+
+  // חישוב מכפיל מע"מ
+  const vatMult=(netTotal>100&&grandTotal>netTotal)?grandTotal/netTotal:1.18;
+
+  // פריטי שורה — חפש כלבו וחדר אוכל עם הסכום שלהם
+  const items=[
+    {keywords:['כלבו'],  cat:'כלבו',     group:'food'},
+    {keywords:['חדר אוכל','חדר-אוכל'], cat:'חדר אוכל', group:'food'},
+  ];
+
+  const amtRe=/(\d[\d,]*\.\d{2})/g;
+  const lines=text.split('\n');
+
+  items.forEach(({keywords,cat,group})=>{
+    // חפש שורה המכילה את שם הפריט
+    const line=lines.find(l=>keywords.some(k=>l.includes(k)));
+    if(!line) return;
+    const amounts=[...line.matchAll(amtRe)].map(m=>parseFloat(m[1].replace(/,/g,'')));
+    if(!amounts.length) return;
+    // הסכום הנטו הוא הגדול ביותר בשורה (או האחרון)
+    const netAmt=Math.max(...amounts);
+    if(netAmt<1) return;
+    const grossAmt=Math.round(netAmt*vatMult*100)/100;
+    rows.push({
+      id:Date.now()+Math.random(),
+      date:dateStr,
+      amount:-grossAmt,
+      description:cat,
+      category:cat,
+      group,
+      source:'budget',
+      type:'expense',
+      month
+    });
+  });
+
+  return rows;
+}
+
 // כאל PDF fallback parser — raw text line-by-line
 function parseCalPDFRaw(text, src){
   const rows=[];
@@ -1376,7 +1454,7 @@ function parseCalPDFRaw(text, src){
 
 function detectSrc(fn){
   const f=fn.toLowerCase();
-  if(/קיבוץ|תקציב|kibbutz|gazit/.test(f)) return'budget';
+  if(/קיבוץ|תקציב|הפרדת|kibbutz|gazit|חשבונית/.test(f)) return'budget';
   // כרטיס סיגל 5042 — קבצי כאל בשם "דף פירוט דיגיטלי"
   if(/כאל|cal|דף.פירוט|דף_פירוט|5042|sigal|סיגל/.test(f)) return'credit_sigal';
   // כרטיס אורי 9519
