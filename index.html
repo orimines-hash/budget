@@ -1307,17 +1307,14 @@ async function handleFiles(files){
         }
       }
       if(!rows.length){
-        // הצג טקסט שחולץ לדיבוג
         const preview = typeof _debugTxt === 'string' ? _debugTxt.slice(0,300).replace(/\s+/g,' ') : 'אין טקסט';
         errors.push(`✗ ${file.name}: לא חולצו שורות | טקסט: "${preview}"`);
         _debugTxt = '';
       } else {
-      } else if(rows.length){
         const fileId='f_'+Date.now()+'_'+Math.random().toString(36).slice(2);
         const _dupKey=t=>`${t.month}|${(t.description||'').trim()}|${Math.round(+t.amount*100)}`;
         const ek=new Set(txns.map(_dupKey));
         const nr=rows.filter(r=>!ek.has(_dupKey(r)));
-        // tag each transaction with this file's id
         nr.forEach(r=>r.fileId=fileId);
         txns.push(...nr);
         const month=detectMonth(file.name,rows);
