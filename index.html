@@ -135,6 +135,25 @@ body{font-family:'Heebo',sans-serif;background:#F5F4EF;color:#1A1917;min-height:
 
   <main class="main">
 
+
+    <!-- SYNC BAR -->
+    <div id="sync-bar" class="sync-bar" style="display:none">
+      <div class="sync-dot idle" id="sync-dot"></div>
+      <span id="sync-status" style="color:var(--text2)">לא מחובר לסנכרון</span>
+      <button class="btn sm" onclick="syncPull()" id="btn-pull" style="margin-right:auto"><i class="ti ti-cloud-download"></i> משוך</button>
+      <button class="btn sm primary" onclick="syncPush()" id="btn-push"><i class="ti ti-cloud-upload"></i> דחוף</button>
+      <button class="btn sm" onclick="toggleSyncSetup()" title="הגדרות סנכרון"><i class="ti ti-settings"></i></button>
+    </div>
+    <div id="sync-setup" style="display:none;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:12px 14px;margin-bottom:1rem;font-size:12px">
+      <div style="font-weight:600;margin-bottom:6px">הגדרת סנכרון GitHub</div>
+      <div style="color:var(--text2);margin-bottom:8px">הזן את הטוקן שלך פעם אחת — יישמר בדפדפן</div>
+      <div class="sync-token-wrap">
+        <input type="password" id="sync-token-inp" class="sync-token-inp" placeholder="github_pat_...">
+        <button class="btn sm primary" onclick="saveSyncToken()">שמור</button>
+        <button class="btn sm danger" onclick="clearSyncToken()">נקה</button>
+      </div>
+      <div style="margin-top:8px;color:var(--text3);font-size:11px">שם משתמש: <strong>orimines-hash</strong> | Data repo: <strong>budget-data</strong></div>
+    </div>
     <!-- OVERVIEW -->
     <div id="view-overview" class="view active">
       <div class="page-title">סקירה חודשית</div>
@@ -1916,6 +1935,108 @@ function softReload(){
   setTimeout(()=>document.getElementById('reload-toast').style.display='none',2000);
 }
 
+
+// ===========================================
+// GITHUB SYNC
+// ===========================================
+const SYNC_USER  = 'orimines-hash';
+const SYNC_REPO  = 'budget-data';
+const SYNC_FILE  = 'data.json';
+const SYNC_KEYS  = ['hh4_txns','hh4_files','hh4_groups','hh4_cats','hh4_rec','hh4_trash','hh4_txntrash','hh4_catdesc','hh4_manual','hh4_learned'];
+
+function getSyncToken(){return localStorage.getItem('sync_token')||'';}
+
+function saveSyncToken(){
+  const v=document.getElementById('sync-token-inp').value.trim();
+  if(!v){alert('נא להזין טוקן');return;}
+  localStorage.setItem('sync_token',v);
+  document.getElementById('sync-setup').style.display='none';
+  initSyncBar();
+}
+function clearSyncToken(){
+  localStorage.removeItem('sync_token');
+  initSyncBar();
+}
+function toggleSyncSetup(){
+  const el=document.getElementById('sync-setup');
+  el.style.display=el.style.display==='none'?'block':'none';
+}
+
+function setSyncStatus(state, msg){
+  const dot=document.getElementById('sync-dot');
+  const txt=document.getElementById('sync-status');
+  dot.className='sync-dot '+state;
+  txt.textContent=msg;
+}
+
+function initSyncBar(){
+  const bar=document.getElementById('sync-bar');
+  bar.style.display='flex';
+  const tok=getSyncToken();
+  if(!tok){
+    setSyncStatus('idle','לא מחובר — לחץ ⚙ להגדרה');
+    document.getElementById('btn-pull').disabled=true;
+    document.getElementById('btn-push').disabled=true;
+  } else {
+    setSyncStatus('ok','מחובר ✓');
+    document.getElementById('btn-pull').disabled=false;
+    document.getElementById('btn-push').disabled=false;
+  }
+}
+
+async function ghRequest(method, path, body=null){
+  const tok=getSyncToken();
+  const res=await fetch(`https://api.github.com${path}`,{
+    method,
+    headers:{
+      'Authorization':`Bearer ${tok}`,
+      'Accept':'application/vnd.github+json',
+      'Content-Type':'application/json',
+      'X-GitHub-Api-Version':'2022-11-28'
+    },
+    body:body?JSON.stringify(body):null
+  });
+  return{status:res.status,data:await res.json()};
+}
+
+async function syncPull(){
+  setSyncStatus('warn','מושך נתונים...');
+  try{
+    const{status,data}=await ghRequest('GET',`/repos/${SYNC_USER}/${SYNC_REPO}/contents/${SYNC_FILE}`);
+    if(status!==200){setSyncStatus('err',`שגיאה: ${data.message}`);return;}
+    const remote=JSON.parse(atob(data.content.replace(/\n/g,'')));
+    // Merge: take remote data, apply to localStorage
+    SYNC_KEYS.forEach(k=>{if(remote[k]!=null)localStorage.setItem(k,JSON.stringify(remote[k]));});
+    softReload();
+    const ts=remote.lastUpdated?` (${new Date(remote.lastUpdated).toLocaleString('he-IL')})`:' ';
+    setSyncStatus('ok',`סונכרן בהצלחה${ts}`);
+  }catch(e){setSyncStatus('err','שגיאת רשת');}
+}
+
+async function syncPush(){
+  setSyncStatus('warn','שומר נתונים...');
+  try{
+    // Get current SHA
+    const{status:s1,data:d1}=await ghRequest('GET',`/repos/${SYNC_USER}/${SYNC_REPO}/contents/${SYNC_FILE}`);
+    const sha=s1===200?d1.sha:null;
+
+    // Build data object
+    const payload={version:1,lastUpdated:new Date().toISOString(),updatedBy:SYNC_USER};
+    SYNC_KEYS.forEach(k=>{try{payload[k]=JSON.parse(localStorage.getItem(k)||'null');}catch{payload[k]=null;}});
+
+    const content=btoa(unescape(encodeURIComponent(JSON.stringify(payload,null,2))));
+    const body={message:`Sync ${new Date().toLocaleString('he-IL')}`,content};
+    if(sha) body.sha=sha;
+
+    const{status:s2,data:d2}=await ghRequest('PUT',`/repos/${SYNC_USER}/${SYNC_REPO}/contents/${SYNC_FILE}`,body);
+    if(s2===200||s2===201){
+      setSyncStatus('ok',`נשמר ✓ ${new Date().toLocaleTimeString('he-IL')}`);
+    } else {
+      setSyncStatus('err',`שגיאה: ${d2.message}`);
+    }
+  }catch(e){setSyncStatus('err','שגיאת רשת');}
+}
+
 // ===========================================
 // NAV
 // ===========================================
@@ -1937,6 +2058,7 @@ function showView(name){
 
 // INIT
 migrateFiles();
+initSyncBar();
 cleanupData();
 const _m=getMonths();if(_m.length) activeMonth=_m[_m.length-1];
 // שחזר לשונית אחרונה (מ-localStorage או מה-hash)
