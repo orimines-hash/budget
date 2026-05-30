@@ -1303,7 +1303,11 @@ async function handleFiles(files){
         }
       }
       if(!rows.length){
-        errors.push(`✗ ${file.name}: לא חולצו שורות — בדוק פורמט`);
+        // הצג טקסט שחולץ לדיבוג
+        const preview = typeof _debugTxt === 'string' ? _debugTxt.slice(0,300).replace(/\s+/g,' ') : 'אין טקסט';
+        errors.push(`✗ ${file.name}: לא חולצו שורות | טקסט: "${preview}"`);
+        _debugTxt = '';
+      } else {
       } else if(rows.length){
         const fileId='f_'+Date.now()+'_'+Math.random().toString(36).slice(2);
         const _dupKey=t=>`${t.month}|${(t.description||'').trim()}|${Math.round(+t.amount*100)}`;
@@ -1397,6 +1401,8 @@ function detectMonth(fname,rows){
   if(rows&&rows.length){const freq={};rows.forEach(r=>{if(r.month)freq[r.month]=(freq[r.month]||0)+1;});const best=Object.entries(freq).sort((a,b)=>b[1]-a[1])[0];if(best)return best[0];}
   return new Date().toISOString().slice(0,7);
 }
+let _debugTxt='';
+
 async function extractPDFPages(pdf){
   let t='';
   for(let i=1;i<=pdf.numPages;i++){
@@ -1404,6 +1410,7 @@ async function extractPDFPages(pdf){
     const content=await p.getTextContent();
     t+=content.items.map(x=>x.str).join(' ')+'\n';
   }
+  _debugTxt=t;
   return t;
 }
 
