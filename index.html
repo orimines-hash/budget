@@ -139,9 +139,7 @@ body{font-family:'Heebo',sans-serif;background:#F5F4EF;color:#1A1917;min-height:
     <!-- SYNC BAR -->
     <div id="sync-bar" class="sync-bar" style="display:none">
       <div class="sync-dot idle" id="sync-dot"></div>
-      <span id="sync-status" style="color:var(--text2)">לא מחובר לסנכרון</span>
-      <button class="btn sm" onclick="syncPull()" id="btn-pull" style="margin-right:auto"><i class="ti ti-cloud-download"></i> משוך</button>
-      <button class="btn sm primary" onclick="syncPush()" id="btn-push"><i class="ti ti-cloud-upload"></i> דחוף</button>
+      <span id="sync-status" style="color:var(--text2);flex:1">לא מחובר לסנכרון</span>
       <button class="btn sm" onclick="toggleSyncSetup()" title="הגדרות סנכרון"><i class="ti ti-settings"></i></button>
     </div>
     <div id="sync-setup" style="display:none;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:12px 14px;margin-bottom:1rem;font-size:12px">
@@ -1980,13 +1978,10 @@ function initSyncBar(){
   const bar=document.getElementById('sync-bar');
   if(bar) bar.style.display='flex';
   const tok=getSyncToken();
-  const btns=['btn-pull','btn-push'].map(id=>document.getElementById(id));
   if(!tok){
     setSyncStatus('idle','לא מחובר — לחץ ⚙ להגדרה');
-    btns.forEach(b=>{if(b)b.disabled=true;});
   } else {
     setSyncStatus('ok','מחובר');
-    btns.forEach(b=>{if(b)b.disabled=false;});
   }
 }
 
