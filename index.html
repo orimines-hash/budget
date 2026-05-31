@@ -1307,7 +1307,7 @@ async function handleFiles(files){
         }
       }
       if(!rows.length){
-        const preview = typeof _debugTxt === 'string' ? _debugTxt.slice(0,300).replace(/\s+/g,' ') : 'אין טקסט';
+        const preview = typeof _debugTxt === 'string' ? _debugTxt.slice(0,2000).replace(/\s+/g,' ') : 'אין טקסט';
         errors.push(`✗ ${file.name}: לא חולצו שורות | טקסט: "${preview}"`);
         _debugTxt = '';
       } else {
