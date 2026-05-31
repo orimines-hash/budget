@@ -1478,16 +1478,27 @@ function parseKibbutz(text){
       dateStr=`${yr}-${dateMatch[2].padStart(2,'0')}-${dateMatch[1].padStart(2,'0')}`;
     }
 
-    // שם לתצוגה: הפוך (קריא) או מה שמופיע
-    const displayName=revDesc.replace(/[*\d\/]/g,'').replace(/\s+/g,' ').trim().slice(0,40)||
-                      descRaw.replace(/[*\d\/]/g,'').replace(/\s+/g,' ').trim().slice(0,40);
+    // תיקון קידוד פונט: PDFים מתוכנות נהח"ש מחזירים טקסט מקודד
+    // לאחר היפוך — מיפוי לשם הנכון
+    const fontFix={
+      'איטרט':'אינטרנט',   'איטרט*':'אינטרנט',
+      'ארגיה':'אנרגיה',     'ארגיה*':'אנרגיה',
+      'כלבו*':'כלבו',
+      'ביוב*':'ביוב',
+      'מים*':'מים',
+      'מוציפלי*':'מוציפלי',
+      'ארוה':'ארנונה',      'ארוה*':'ארנונה',
+      'חיוך':'חיוך',        'חיוך*':'חיוך',
+      'ד"שכ':'שכ"ד',        'כש" ד':'שכ"ד',
+    };
+    const fixedName=fontFix[displayName]||fontFix[displayName.replace(/\s*\d+\/\d+\s*/g,'').trim()]||displayName;
 
     rows.push({
       id:Date.now()+Math.random(),
       date:dateStr,
       amount:isIncome?amount:-amount,
-      description:displayName,
-      category:cat, group,
+      description:fixedName,
+      category:canonicalize(fixedName).cat||cat, group:canonicalize(fixedName).group||group,
       source:'budget',
       type:isIncome?'income':'expense',
       month:month||dateStr.slice(0,7)
