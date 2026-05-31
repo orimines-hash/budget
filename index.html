@@ -1280,9 +1280,7 @@ async function handleFiles(files){
         if(src==='budget'){
           const txt=await pdfText(file);
           if(isKibbutzInvoice(txt)){
-            // Use row-based extraction for invoice — better structure
-            const invLines=await pdfTextByRows(file);
-            rows=parseKibbutzInvoicePDF(invLines);
+            rows=parseKibbutzInvoicePDF(txt);
           } else {
             rows=parseKibbutz(txt);
           }
@@ -1345,14 +1343,16 @@ async function handleFiles(files){
 // חשבונית מס קיבוץ — פרסר ייעודי (כלבו, חדר אוכל נפרדים)
 // ==========================================================
 function isKibbutzInvoice(text){
-  return /חשבונית מס/.test(text) && /קיבוץ גזית/.test(text);
+  // הטקסט מגיע הפוך (ויזואלי) — "חשבונית מס" ← "סמ תינובשח", "קיבוץ גזית" ← "תיזג ץוביק"
+  return /חשבונית מס|סמ תינובשח/.test(text) && /קיבוץ גזית|תיזג ץוביק/.test(text)||
+         /INVOICE/.test(text) && /1934000/.test(text);
 }
 
-function parseKibbutzInvoicePDF(lines){
+function parseKibbutzInvoicePDF(text){
+  // הטקסט מגיע בסדר ויזואלי הפוך — לא מחפשים שמות אלא מוצאים סכומים מתמטית
   const rows=[];
-  const text=lines.join('\n');
 
-  // תאריך חשבונית
+  // תאריך — הראשון שמופיע בפורמט DD/MM/YYYY
   const dm=text.match(/(\d{2})\/(\d{2})\/(\d{2,4})/);
   let dateStr='',month='';
   if(dm){
@@ -1360,59 +1360,53 @@ function parseKibbutzInvoicePDF(lines){
     dateStr=`${yr}-${dm[2].padStart(2,'0')}-${dm[1].padStart(2,'0')}`;
     month=dateStr.slice(0,7);
   }
+  if(!month) return [];
 
-  // מכפיל מע"מ — תמיד 18% על פי חשבונית
-  const vatMult=1.18;
+  // כל הסכומים העשרוניים בטקסט
+  const allAmts=[...text.matchAll(/(\d{1,3}(?:,\d{3})*\.\d{2})/g)]
+    .map(m=>parseFloat(m[1].replace(/,/g,'')))
+    .filter(n=>n>10);
 
-  // חפש כל מספר עשרוני בדף
-  const amtRe=/(\d{1,3}(?:,\d{3})*\.\d{2})/g;
+  // סה"כ לתשלום = הסכום הגדול ביותר
+  const grandTotal=allAmts.length?Math.max(...allAmts):0;
+  if(!grandTotal) return [];
 
-  // פונקציה: חפש שורה המכילה מילת מפתח, החזר סכומים ממנה
-  function findItemAmt(keywords){
-    for(const line of lines){
-      if(keywords.some(kw=>line.includes(kw))){
-        const amounts=[...line.matchAll(amtRe)]
-          .map(m=>parseFloat(m[1].replace(/,/g,'')))
-          .filter(n=>n>10&&n<10000);
-        if(amounts.length) return Math.max(...amounts);
+  // נטו משוער ≈ grandTotal / 1.18
+  const netEst=grandTotal/1.18;
+
+  // מצא שני סכומים ייחודיים שמסתכמים לנטו (±10 ₪)
+  const unique=[...new Set(allAmts.map(n=>Math.round(n*100)/100))]
+    .filter(n=>n<grandTotal*0.95 && n>50)
+    .sort((a,b)=>a-b);
+
+  let netA=0,netB=0;
+  outer: for(let i=0;i<unique.length;i++){
+    for(let j=i;j<unique.length;j++){
+      if(Math.abs(unique[i]+unique[j]-netEst)<10){
+        netA=unique[i]; netB=unique[j]; break outer;
       }
     }
-    // Fallback: חפש בטקסט המלא לפי קרבה
-    for(const kw of keywords){
-      const pos=text.indexOf(kw);
-      if(pos<0) continue;
-      const ctx=text.slice(Math.max(0,pos-200),pos+200);
-      const amounts=[...ctx.matchAll(amtRe)]
-        .map(m=>parseFloat(m[1].replace(/,/g,'')))
-        .filter(n=>n>10&&n<10000);
-      if(amounts.length) return Math.max(...amounts);
-    }
-    return 0;
   }
+  if(!netB) return [];
 
-  const items=[
-    {keywords:['כלבו'],                    name:'כלבו',     cat:'כלבו',     group:'food'},
-    {keywords:['חדר אוכל','אוכל חדר','חדר-אוכל'], name:'חדר אוכל', cat:'חדר אוכל', group:'food'},
-  ];
+  const vatMult=grandTotal/(netA+netB);
 
-  items.forEach(({keywords,name,cat,group})=>{
-    const netAmt=findItemAmt(keywords);
-    if(!netAmt) return;
-    const grossAmt=Math.round(netAmt*vatMult*100)/100;
+  // כלבו = הגדול, חדר אוכל = הקטן
+  [
+    {name:'כלבו',     netAmt:netB, cat:'כלבו',     group:'food'},
+    {name:'חדר אוכל', netAmt:netA, cat:'חדר אוכל', group:'food'},
+  ].forEach(({name,netAmt,cat,group})=>{
+    const gross=Math.round(netAmt*vatMult*100)/100;
     rows.push({
       id:Date.now()+Math.random(),
-      date:dateStr,
-      amount:-grossAmt,
-      description:name,
-      category:cat,
-      group,
-      source:'budget',
-      type:'expense',
-      month
+      date:dateStr, amount:-gross,
+      description:name, category:cat, group,
+      source:'budget', type:'expense', month
     });
   });
 
   return rows;
 }
+
 
 
