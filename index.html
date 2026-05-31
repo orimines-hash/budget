@@ -1409,4 +1409,92 @@ function parseKibbutzInvoicePDF(text){
 }
 
 
+function parseKibbutz(text){
+  const rows=[];
+  // חילוץ חודש — תאריך ערך מגיע הפוך: "01/01/26 - 31/01/26 ךרע ךיראת"
+  let month='';
+  const rm=text.match(/(\d{2})\/(\d{2})\/(\d{2,4})\s*-\s*(\d{2})\/(\d{2})\/(\d{2,4})/);
+  if(rm){
+    // קח את הסוף (31/01/26) כחודש החיוב
+    const yr=rm[6].length===2?2000+ +rm[6]:+rm[6];
+    month=`${yr}-${rm[5].padStart(2,'0')}`;
+  }
+  if(!month){
+    const d=text.match(/(\d{2})\/(\d{2})\/(\d{2,4})/);
+    if(d){const yr=d[3].length===2?2000+ +d[3]:+d[3];month=`${yr}-${d[2].padStart(2,'0')}`;}
+  }
+
+  // מצא את כל מספרי המסמכים (9 ספרות מתחילות ב-21)
+  const docRe=/\b(2[01]\d{7})\b/g;
+  const amtRe=/(\d{1,3}(?:,\d{3})*\.\d{2})/g;
+
+  // אסוף כל מסמכים עם מיקום
+  const docs=[];
+  let m;
+  while((m=docRe.exec(text))!==null) docs.push({num:m[1],pos:m.index});
+
+  const seen=new Set();
+
+  docs.forEach((doc,i)=>{
+    const prevPos=i>0?docs[i-1].pos:0;
+    const nextPos=docs[i+1]?docs[i+1].pos:text.length;
+
+    // סכום: חפש לפני מספר המסמך (בין מסמך קודם לנוכחי)
+    const beforeText=text.slice(prevPos,doc.pos);
+    const amounts=[...beforeText.matchAll(amtRe)]
+      .map(m=>parseFloat(m[1].replace(/,/g,'')))
+      .filter(n=>n>5&&n<100000);
+    // קח את הסכום המשמעותי הראשון (לא כפול)
+    const uniqueAmts=[...new Set(amounts.map(n=>Math.round(n*100)/100))];
+    const amount=uniqueAmts.find(n=>n>5&&n<100000)||0;
+    if(!amount||seen.has(`${doc.num}|${amount}`)) return;
+    seen.add(`${doc.num}|${amount}`);
+
+    // תיאור: חפש אחרי מספר המסמך
+    const afterText=text.slice(doc.pos,nextPos);
+    let descRaw=afterText
+      .replace(/\b2[01]\d{7}\b/g,'')
+      .replace(/\d{2}\/\d{2}\/\d{2,4}/g,'')
+      .replace(/\d{1,3}(?:,\d{3})*\.\d{2}/g,'')
+      .replace(/ח"ש|ש"ח|₪|\*/g,'')
+      .replace(/\d+\/\d+/g,'')
+      .replace(/[\uF8FF\uFB1D-\uFB4E]/g,'')  // undo private-use chars
+      .replace(/\s+/g,' ')
+      .trim();
+
+    // היפוך: הטקסט מגיע ויזואלי-הפוך
+    const revDesc=descRaw.split('').reverse().join('').trim();
+
+    // נסה גם הפוך וגם ישר
+    const {cat,group}=canonicalize(revDesc)||canonicalize(descRaw);
+
+    // זהה הכנסה
+    const isIncome=/גמול|סולרי|הכנסה/.test(revDesc+descRaw);
+
+    const dateMatch=text.slice(doc.pos,doc.pos+60).match(/(\d{2})\/(\d{2})\/(\d{2,4})/);
+    let dateStr=month?`${month}-01`:'';
+    if(dateMatch){
+      const yr=dateMatch[3].length===2?2000+ +dateMatch[3]:+dateMatch[3];
+      dateStr=`${yr}-${dateMatch[2].padStart(2,'0')}-${dateMatch[1].padStart(2,'0')}`;
+    }
+
+    // שם לתצוגה: הפוך (קריא) או מה שמופיע
+    const displayName=revDesc.replace(/[*\d\/]/g,'').replace(/\s+/g,' ').trim().slice(0,40)||
+                      descRaw.replace(/[*\d\/]/g,'').replace(/\s+/g,' ').trim().slice(0,40);
+
+    rows.push({
+      id:Date.now()+Math.random(),
+      date:dateStr,
+      amount:isIncome?amount:-amount,
+      description:displayName,
+      category:cat, group,
+      source:'budget',
+      type:isIncome?'income':'expense',
+      month:month||dateStr.slice(0,7)
+    });
+  });
+
+  return rows;
+}
+
 
